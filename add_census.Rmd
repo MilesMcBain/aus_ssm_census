@@ -1,0 +1,99 @@
+---
+title: "Combining Census data with the Same Sex Marriage Survey in R"
+author: "Miles McBain"
+date: "November 25, 2017"
+output: html_document
+---
+
+# Load SSM data
+
+```{r}
+library(readr)
+ssm_response <- read_csv("./SSM_AUS_Response.csv") %>%  
+  mutate(State = gsub("TAS", "Tas.", State))
+ssm_participation <- read_csv("./SSM_AUS_Participation.csv")
+
+```
+
+# Get Census Data
+We ignore all the reports and go straight for the 'datapacks' at https://datapacks.censusdata.abs.gov.au/datapacks/. These are geographically summarised views of the data. To get a datapack we have to make two choices regarding the how the summaries are made:
+1. 'Type' which cocerns questions like: do you want to summarise by people's place of residence or by place where they filled out the census form? For a postal survey we want the the data summarised by place of residence which is the 'General Community Profile' datapack. 
+
+1. Geographical area used for summarise. To match the postal survey data we choose 'Commonwealth Electoral Divisions'.
+
+If you'd prefer not to do this you can use my [`fetch_data.R` script]() to fetch and decompress the datapack to `./data`
+
+# Navigating the Data Pack
+The datapack consists of 59 encoded csv files and 3 metadata excel files that will help us decode their meaning. What? You didn't think this was going to be straight forward did you? When I say encoded, I mean the csv's have inscrutable names like `2016Census_G09C.csv` and contain column names like `Se_d_r_or_t_h_t_Tot_NofB_0_ib` (H.T. @hughparsonage).
+
+```{r}
+library(readxl)
+electorate_codes <- read_excel(
+  path = "./data/Metadata/2016Census_geog_desc_1st_and_2nd_release.xlsx",
+  sheet = "2016_ASGS_Non-ABS_Structures")
+
+column_codes <- read_excel(
+  path = "./data/Metadata/Metadata_2016_GCP_DataPack.xlsx",
+  sheet = "Cell descriptors information",
+  skip = 10)
+```
+
+# Religious Affiliation
+```{r}
+library(tidyverse)
+
+religious_affiliation_by_person <-
+  read_csv(
+    file = "data/2016 Census GCP Commonwealth Electoral Divisions for AUST/2016Census_G14_AUS_CED.csv")
+
+names(religious_affiliation_by_person)[-1] <- 
+  column_codes$Long[match(names(religious_affiliation_by_person), column_codes$Short)[-1]]
+
+religion <-
+  religious_affiliation_by_person %>%
+  mutate(prop_christian_and_muslim = ((Christianity_Total_Persons + Islam_Persons)/Total_Persons)*100 ) %>%
+  left_join(electorate_codes, by = c("CED_CODE_2016" = "Census_Code_2016"))
+  
+religion_vs_no <- 
+  ssm_response %>%
+  left_join(religion, by = c("area" = "Census_Name_2016")) %>%
+  select(area, prop_christian_and_muslim, `No pct`, State)
+
+```
+## A plot
+```{r}
+library(ggplot2)
+religion_vs_no %>%
+  ggplot(aes(x = `No pct`, y = prop_christian_and_muslim, colour= State, label = area)) +
+  geom_point() +
+  facet_wrap(~State) +
+  theme(legend.position = "none")
+```
+
+
+# Won't Somebody Think of the Children
+```{r}
+family_composition <- 
+  read_csv("data/2016 Census GCP Commonwealth Electoral Divisions for AUST/2016Census_G25_AUS_CED.csv")
+
+names(family_composition)[-1] <- 
+  column_codes$Long[match(names(family_composition), column_codes$Short)[-1]]
+
+families_with_young_children <- 
+  family_composition %>%
+  mutate(pct_young_children = (Couple_family_with_children_under_15_and_no_dependent_students_and_no_non_dependent_children_Persons/Total_Persons)*100) %>%
+  left_join(electorate_codes, by = c("CED_CODE_2016" = "Census_Code_2016"))
+
+families_with_young_children_vs_no <-
+  ssm_response %>%
+  left_join(families_with_young_children, by = c("area" = "Census_Name_2016")) %>%
+  select(area, pct_young_children, `No pct`, State)
+
+families_with_young_children_vs_no %>%
+  ggplot(aes(x = pct_young_children, y = `No pct`)) +
+  geom_point() + 
+  facet_wrap(~State)
+
+```
+
+
