@@ -16,15 +16,18 @@ ssm_participation <- read_csv("./SSM_AUS_Participation.csv")
 ```
 
 # Get Census Data
-We ignore all the reports and go straight for the 'datapacks' at https://datapacks.censusdata.abs.gov.au/datapacks/. These are geographically summarised views of the data. To get a datapack we have to make two choices regarding the how the summaries are made:
-1. 'Type' which cocerns questions like: do you want to summarise by people's place of residence or by place where they filled out the census form? For a postal survey we want the the data summarised by place of residence which is the 'General Community Profile' datapack. 
+Ignore all the reports and go straight for the 'datapacks' at https://datapacks.censusdata.abs.gov.au/datapacks/. These are geographically summarised views of the data. To get data there are two choices to be made regarding the how the summaries are produced:
+1. 'Type' which concerns questions like: do you want to summarise by people's place of residence or by place where they filled out the census form? For a postal survey we want the the data summarised by place of residence which is the 'General Community Profile' datapack. 
 
-1. Geographical area used for summarise. To match the postal survey data we choose 'Commonwealth Electoral Divisions'.
+1. Geographical area used for summarise. To match the postal survey data I chose 'Commonwealth Electoral Divisions'.
 
-If you'd prefer not to do this you can use my [`fetch_data.R` script]() to fetch and decompress the datapack to `./data`
+If you'd prefer not to do this you can use my [`fetch_data.R` script](https://github.com/MilesMcBain/aus_ssm_census/blob/master/fetch_data.R) to fetch and decompress the datapack to `./data`.
 
 # Navigating the Data Pack
 The datapack consists of 59 encoded csv files and 3 metadata excel files that will help us decode their meaning. What? You didn't think this was going to be straight forward did you? When I say encoded, I mean the csv's have inscrutable names like `2016Census_G09C.csv` and contain column names like `Se_d_r_or_t_h_t_Tot_NofB_0_ib` (H.T. @hughparsonage).
+
+Two of the metadata files in `./data/Metadata/` have useful applications for us: `2016Census_geog_desc_1st_and_2nd_release.xlsx` will help us resolve encoded geographic areas to federal electorate names. `Metadata_2016_GCP_DataPack.xlsx` lists the topics of each of the 59 tables and will allow us to replace a short and uninformative column name with a much longer, and slightly more informative name. These can be read without too much hassle:
+
 
 ```{r}
 library(readxl)
@@ -39,6 +42,39 @@ column_codes <- read_excel(
 ```
 
 # Religious Affiliation
+Suppose we are interested in reproducing [This Guardian article](https://www.theguardian.com/australia-news/datablog/2017/nov/17/same-sex-marriage-survey-religion-drove-the-no-vote)'s analysis of the correlation between percentage of religious people and percentage No votes.  The first step is to identify the datapack table that contains religious affiliation data. If we look at sheet two of `Metadata_2016_GCP_DataPack.xlsx` we can see a likely choice is table 'G14':
+![](religious_info.png)
+
+Next I read in the table and replace the short column names with the long ones to help makes sense of the table. This is indicitive what we're working with:
+```
+# A tibble: 168 x 103
+   CED_CODE_2016 Buddhism_Males Buddhism_Females Buddhism_Persons
+           <chr>          <int>            <int>            <int>
+ 1        CED101           2766             3921             6687
+ 2        CED102           3764             5078             8849
+ 3        CED103           3136             4200             7337
+ 4        CED104           1718             2240             3953
+ 5        CED105           6508             7815            14323
+ 6        CED106           2043             3012             5061
+ 7        CED107            399              573              971
+ 8        CED108           1092             1222             2312
+ 9        CED109            789             1224             2017
+10        CED110            611              878             1491
+# ... with 158 more rows, and 99 more variables:
+#   Christianity_Anglican_Males <int>,
+#   Christianity_Anglican_Females <int>,
+#   Christianity_Anglican_Persons <int>,
+#   Christianity_Assyrian_Apostolic_Males <int>,
+#   Christianity_Assyrian_Apostolic_Females <int>,
+...
+#   Christianity_Total_Persons <int>, Hinduism_Males <int>,
+#   Hinduism_Females <int>, Hinduism_Persons <int>, Islam_Males <int>,
+#   Islam_Females <int>, Islam_Persons <int>, Judaism_Males <int>,
+...
+
+```
+Notice how the records are keyed by `CED_CODE_2016`.
+
 ```{r}
 library(tidyverse)
 
@@ -46,17 +82,22 @@ religious_affiliation_by_person <-
   read_csv(
     file = "data/2016 Census GCP Commonwealth Electoral Divisions for AUST/2016Census_G14_AUS_CED.csv")
 
-names(religious_affiliation_by_person)[-1] <- 
-  column_codes$Long[match(names(religious_affiliation_by_person), column_codes$Short)[-1]]
+short_to_long_names <- function(a_dataframe, short_names, long_names){
+  short_name_match_idx <- match(names(a_dataframe), short_names)
+  names_with_match <- !is.na(short_name_match_idx)
+  names(a_dataframe)[names_with_match] <- long_names[short_name_match_idx[names_with_match]]
+  a_dataframe
+}
 
-religion <-
-  religious_affiliation_by_person %>%
-  mutate(prop_christian_and_muslim = ((Christianity_Total_Persons + Islam_Persons)/Total_Persons)*100 ) %>%
-  left_join(electorate_codes, by = c("CED_CODE_2016" = "Census_Code_2016"))
-  
+religious_affiliation_by_person <- 
+  short_to_long_names(religious_affiliation_by_person, column_codes$Short, column_codes$Long)
+
 religion_vs_no <- 
   ssm_response %>%
-  left_join(religion, by = c("area" = "Census_Name_2016")) %>%
+  left_join(electorate_codes, by = c("area" = "Census_Name_2016")) %>%
+  filter(ASGS_Structure == "CED") %>%
+  left_join(religious_affiliation_by_person, by = c("Census_Code_2016" = "CED_CODE_2016")) %>%
+  mutate(prop_christian_and_muslim = ((Christianity_Total_Persons + Islam_Persons)/Total_Persons)*100 ) %>%
   select(area, prop_christian_and_muslim, `No pct`, State)
 
 ```
@@ -76,17 +117,15 @@ religion_vs_no %>%
 family_composition <- 
   read_csv("data/2016 Census GCP Commonwealth Electoral Divisions for AUST/2016Census_G25_AUS_CED.csv")
 
-names(family_composition)[-1] <- 
-  column_codes$Long[match(names(family_composition), column_codes$Short)[-1]]
-
-families_with_young_children <- 
-  family_composition %>%
-  mutate(pct_young_children = (Couple_family_with_children_under_15_and_no_dependent_students_and_no_non_dependent_children_Persons/Total_Persons)*100) %>%
-  left_join(electorate_codes, by = c("CED_CODE_2016" = "Census_Code_2016"))
+family_composition <-  
+  short_to_long_names(family_composition, column_codes$Short, column_codes$Long)
 
 families_with_young_children_vs_no <-
   ssm_response %>%
-  left_join(families_with_young_children, by = c("area" = "Census_Name_2016")) %>%
+  left_join(electorate_codes, by = c("area" = "Census_Name_2016")) %>%
+  filter(ASGS_Structure == "CED") %>%
+  left_join(family_composition, by = c("Census_Code_2016" = "CED_CODE_2016")) %>%
+  mutate(pct_young_children = (Couple_family_with_children_under_15_and_no_dependent_students_and_no_non_dependent_children_Persons/Total_Persons)*100) %>%
   select(area, pct_young_children, `No pct`, State)
 
 families_with_young_children_vs_no %>%
