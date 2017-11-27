@@ -73,7 +73,9 @@ Next I read in the table and replace the short column names with the long ones t
 ...
 
 ```
-Notice how the records are keyed by `CED_CODE_2016`.
+Notice how the records are keyed by `CED_CODE_2016` which stands for Commonwealth Electoral Division. The next step is to update the columns of G14 with their more expressive long names. We are going append these columns to our response data. Unfortuately we do not have a common key to join these tables with, so there is an intermediate step to join the CED code to the response data from `electoral_codes`. 
+
+Once the regligous affiliation data are appeneded to the correct electorate row, we calculate a new variable representing the proportion of religious people: `prop_christian_and_islamic`. I singled out these because they are are Australia's top two and I am aware of anti-same sex marriage stances within both. Take a look at the code before some more detailed commentary:
 
 ```{r}
 library(tidyverse)
@@ -98,14 +100,25 @@ religion_vs_no <-
   filter(ASGS_Structure == "CED") %>%
   left_join(religious_affiliation_by_person, by = c("Census_Code_2016" = "CED_CODE_2016")) %>%
   mutate(prop_christian_and_muslim = ((Christianity_Total_Persons + Islam_Persons)/Total_Persons)*100 ) %>%
-  select(area, prop_christian_and_muslim, `No pct`, State)
+  select(area, prop_christian_and_islamic, `No pct`, State)
 
 ```
+
+I wrote a function to replace the short with long names for 2 reasons: it was a fiddly task and knew I would need to repeat it. Compare the code for that function with my original one liner: `names(religious_affiliation_by_person)[-1] <- column_codes$Long[match(names(religious_affiliation_by_person), column_codes$Short)[-1]]`
+
+Yuck! 
+
+## On performing joins
+I'd like to spend a minute discussing joins. There is really only one join you need for > 90% of cases and that is the left join. The reason you want the left join is that when you arrange your tables properly you can use the presence of `NA` as a litmus test for problems relating to data mismatches. Inner joins will silently filter mismatches which is just plain scary! Imagine loosing rows of data because dumb join code coudln't resolve that "QLD" and "Qld" actually refer to the same state.
+
+So how to arrange your tables in left joins to maximise our ability to detect problems? The rule of thumb I suggest is from subset to superset (effectively smallest to largest). Think about about it: If I left join a subset (statewise survey responses) to a superset  
+
+
 ## A plot
 ```{r}
 library(ggplot2)
 religion_vs_no %>%
-  ggplot(aes(x = `No pct`, y = prop_christian_and_muslim, colour= State, label = area)) +
+  ggplot(aes(x = `No pct`, y = prop_christian_and_islamic, colour= State, label = area)) +
   geom_point() +
   facet_wrap(~State) +
   theme(legend.position = "none")
