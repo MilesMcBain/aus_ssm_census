@@ -1,22 +1,30 @@
 ---
-title: "Combining Census data with the Same Sex Marriage Survey in R"
+title: "Combining Australian Census data with the Same Sex Marriage Postal Survey in R"
 author: "Miles McBain"
 date: "November 25, 2017"
 output: html_document
 ---
 
+# Intro
+
+Last week I put out a post that showed you how to [tidy the Same Sex Marriage Postal Survey Data in R](). In this post we'll visualise that data in combination with 2016 Census. I appologise to people just here for the R -the main challenge here is actually just navigating the ABS's Census datapack, but I've tried to include a few perls of wisdom on joining datasets to keep things interesting for you. 
+
 # Load SSM data
+
+We'll start with the survey response dataset from last week. [Grab it from my repo](https://github.com/MilesMcBain/tidy_aus_ssm/) if you need. Note the little fix in the `mutate` for some untidyness that slipped through. Both of those refer to Tasmania.
 
 ```{r}
 library(readr)
 ssm_response <- read_csv("./SSM_AUS_Response.csv") %>%  
   mutate(State = gsub("TAS", "Tas.", State))
-ssm_participation <- read_csv("./SSM_AUS_Participation.csv")
 
 ```
 
 # Get Census Data
-Ignore all the reports and go straight for the 'datapacks' at https://datapacks.censusdata.abs.gov.au/datapacks/. These are geographically summarised views of the data. To get data there are two choices to be made regarding the how the summaries are produced:
+
+The ABS has a few different census offerings. I looked at them all. You can trust me when I say to ignore all the reports and go straight for the 'datapacks' at https://datapacks.censusdata.abs.gov.au/datapacks/.
+
+Datapacks are geographically summarised views of the raw data. To get data there are two choices to be made regarding the how the summaries are produced:
 1. 'Type' which concerns questions like: do you want to summarise by people's place of residence or by place where they filled out the census form? For a postal survey we want the the data summarised by place of residence which is the 'General Community Profile' datapack. 
 
 1. Geographical area used for summarise. To match the postal survey data I chose 'Commonwealth Electoral Divisions'.
@@ -24,6 +32,7 @@ Ignore all the reports and go straight for the 'datapacks' at https://datapacks.
 If you'd prefer not to do this you can use my [`fetch_data.R` script](https://github.com/MilesMcBain/aus_ssm_census/blob/master/fetch_data.R) to fetch and decompress the datapack to `./data`.
 
 # Navigating the Data Pack
+
 The datapack consists of 59 encoded csv files and 3 metadata excel files that will help us decode their meaning. What? You didn't think this was going to be straight forward did you? When I say encoded, I mean the csv's have inscrutable names like `2016Census_G09C.csv` and contain column names like `Se_d_r_or_t_h_t_Tot_NofB_0_ib` (H.T. @hughparsonage).
 
 Two of the metadata files in `./data/Metadata/` have useful applications for us: `2016Census_geog_desc_1st_and_2nd_release.xlsx` will help us resolve encoded geographic areas to federal electorate names. `Metadata_2016_GCP_DataPack.xlsx` lists the topics of each of the 59 tables and will allow us to replace a short and uninformative column name with a much longer, and slightly more informative name. These can be read without too much hassle:
@@ -42,10 +51,10 @@ column_codes <- read_excel(
 ```
 
 # Religious Affiliation
-Suppose we are interested in reproducing [This Guardian article](https://www.theguardian.com/australia-news/datablog/2017/nov/17/same-sex-marriage-survey-religion-drove-the-no-vote)'s analysis of the correlation between percentage of religious people and percentage No votes.  The first step is to identify the datapack table that contains religious affiliation data. If we look at sheet two of `Metadata_2016_GCP_DataPack.xlsx` we can see a likely choice is table 'G14':
+Suppose we are interested in reproducing [This Guardian article](https://www.theguardian.com/australia-news/datablog/2017/nov/17/same-sex-marriage-survey-religion-drove-the-no-vote)'s analysis of the correlation between percentage of religious people and percentage No votes. The first step is to identify the datapack table that contains religious affiliation data. If we look at sheet two of `Metadata_2016_GCP_DataPack.xlsx` we can see a likely choice is table 'G14':
 ![](religious_info.png)
 
-Next I read in the table and replace the short column names with the long ones to help makes sense of the table. This is indicitive what we're working with:
+I read in the table and replaced the short column names with the long ones to help makes sense of it. This is indicitive what we're working with:
 ```
 # A tibble: 168 x 103
    CED_CODE_2016 Buddhism_Males Buddhism_Females Buddhism_Persons
@@ -73,9 +82,9 @@ Next I read in the table and replace the short column names with the long ones t
 ...
 
 ```
-Notice how the records are keyed by `CED_CODE_2016` which stands for Commonwealth Electoral Division. The next step is to update the columns of G14 with their more expressive long names. We are going append these columns to our response data. Unfortuately we do not have a common key to join these tables with, so there is an intermediate step to join the CED code to the response data from `electoral_codes`. 
+We are going append these columns to our response data. Notice how the records are keyed by `CED_CODE_2016` which stands for Commonwealth Electoral Division. Unfortuately we do not have a common key column to join these data, so there is an intermediate step to join the CED code to the response data from `electoral_codes` before joining the religious affiliation data. 
 
-Once the regligous affiliation data are appeneded to the correct electorate row, we calculate a new variable representing the proportion of religious people: `prop_christian_and_islamic`. I singled out these because they are are Australia's top two and I am aware of anti-same sex marriage stances within both. Take a look at the code before some more detailed commentary:
+Take a look at the code before some more detailed commentary:
 
 ```{r}
 library(tidyverse)
@@ -99,33 +108,47 @@ religion_vs_no <-
   left_join(electorate_codes, by = c("area" = "Census_Name_2016")) %>%
   filter(ASGS_Structure == "CED") %>%
   left_join(religious_affiliation_by_person, by = c("Census_Code_2016" = "CED_CODE_2016")) %>%
-  mutate(prop_christian_and_muslim = ((Christianity_Total_Persons + Islam_Persons)/Total_Persons)*100 ) %>%
+  mutate(prop_christian_and_islamic = ((Christianity_Total_Persons + Islam_Persons)/Total_Persons)*100 ) %>%
   select(area, prop_christian_and_islamic, `No pct`, State)
 
 ```
 
-I wrote a function to replace the short with long names for 2 reasons: it was a fiddly task and knew I would need to repeat it. Compare the code for that function with my original one liner: `names(religious_affiliation_by_person)[-1] <- column_codes$Long[match(names(religious_affiliation_by_person), column_codes$Short)[-1]]`
+I wrote a function to replace the short with long names since it was a fiddly task and knew I would need to repeat it. Compare the code for that function with my original one liner: `names(religious_affiliation_by_person)[-1] <- column_codes$Long[match(names(religious_affiliation_by_person), column_codes$Short)[-1]]` Yuck! 
 
-Yuck! 
+After renaming we get into building up the dataset by layering census data onto our response data. We join on `electorate_codes` by electorate name to get the 'CED Code' that matches each elecorate. A filter step needs to follow because there is a second type of code that matches our electorates introducing duplicates. We filter to just "CED". 
 
-## On performing joins
-I'd like to spend a minute discussing joins. There is really only one join you need for > 90% of cases and that is the left join. The reason you want the left join is that when you arrange your tables properly you can use the presence of `NA` as a litmus test for problems relating to data mismatches. Inner joins will silently filter mismatches which is just plain scary! Imagine loosing rows of data because dumb join code coudln't resolve that "QLD" and "Qld" actually refer to the same state.
+Using the CED code we join on the religious affiliation data. We then calculate a new variable representing the proportion of religious people: `prop_christian_and_islamic`. I singled out these religions because they are are Australia's top two and I am aware of anti-same sex marriage stances within both. Finally, select just a subset of columns of interest to make a plot of the correlation.
 
-So how to arrange your tables in left joins to maximise our ability to detect problems? The rule of thumb I suggest is from subset to superset (effectively smallest to largest). Think about about it: If I left join a subset (statewise survey responses) to a superset  
+## An aside on performing joins
 
+I'd like to spend a minute discussing joins, feel free to skip to the plot if this sounds like pulling weeds.
+
+There is only one join you need for > 90% of data science cases and that is the left join. Inner joins will silently filter mismatches -which is just plain scary! Outer joins can result in a mix of `NA`'s: some that are to be expected and some that are not, making it easier to miss or mis-diagnose problems. Stick with left join and you'll have the simple set of failure modes you can easily diagnose. 
+
+So how to arrange your datasets in a left join? Put the kernel of your analysis dataset on the left. Put data you are trying to append to that on the right. E.g.: `left_join(reponse_data, census_data)`. You now have exactly one source of potential contamination for the kernel columns and that is duplication introduced by multiple mathcing records in the right set. You can easily test for this is by doing `duplicated()` on your key column (e.g. electorate) or by keeping an eye on the number of rows. This is how I spotted the duplicate electorate codes. You may have some instances of a mismatch that will lead to tell-tale NAs in all columns from the dataframe on the right. Test for this with `anyNA()` or `sum(is.na())`.  
 
 ## A plot
+We observe the expected positive correlation between religious affiliation and 'No' response on same sex marriage:
 ```{r}
 library(ggplot2)
 religion_vs_no %>%
-  ggplot(aes(x = `No pct`, y = prop_christian_and_islamic, colour= State, label = area)) +
+  ggplot(aes(x = prop_christian_and_islamic, 
+             y = `No pct`, 
+             colour= State)) +
   geom_point() +
   facet_wrap(~State) +
-  theme(legend.position = "none")
+  theme(legend.position = "none", text = element_text(family = "Noto")) + 
+  ggtitle("Statewise Relationships Between Religious Affiliation and 'No' Response", "2017 Australian Same Sex Marriage Postal Survey")
 ```
 
 
-# Won't Somebody Think of the Children
+# Won't Somebody Please Think of the Children
+I wasn't content to simply reproduce someone else's analysis, so I thought I'd make some original contribution to the discourse by looking for a trend in responses from parents.
+
+This was motivated by the No campaign going full [Helen Lovejoy](https://www.youtube.com/watch?v=RybNI0KB1bg) and trying to turn the public debate to the potential for gender confusion in school children when they are subjected to the idea that anyone can marry anyone. Or something. I can't say I fully grasped their reasoning. But if their concern were validated by a majority of parents with children under 15, we might expect to see a similar trend to that of religion. 
+
+The code I used is very similar to above. The main trap is that you have to be careful not to mix statistics for families with statistics for persons, since the totals of these are different. 
+
 ```{r}
 family_composition <- 
   read_csv("data/2016 Census GCP Commonwealth Electoral Divisions for AUST/2016Census_G25_AUS_CED.csv")
@@ -138,14 +161,25 @@ families_with_young_children_vs_no <-
   left_join(electorate_codes, by = c("area" = "Census_Name_2016")) %>%
   filter(ASGS_Structure == "CED") %>%
   left_join(family_composition, by = c("Census_Code_2016" = "CED_CODE_2016")) %>%
-  mutate(pct_young_children = (Couple_family_with_children_under_15_and_no_dependent_students_and_no_non_dependent_children_Persons/Total_Persons)*100) %>%
+  mutate(pct_young_children =
+    ((Couple_family_with_children_under_15_and_no_dependent_students_and_no_non_dependent_children_Persons +
+    One_parent_family_with_children_under_15_and_no_dependent_students_and_no_non_dependent_children_Persons)/
+    Total_Persons))*100) %>%
   select(area, pct_young_children, `No pct`, State)
 
 families_with_young_children_vs_no %>%
-  ggplot(aes(x = pct_young_children, y = `No pct`)) +
+  ggplot(aes(x = pct_young_children, y = `No pct`, colour = State)) +
   geom_point() + 
-  facet_wrap(~State)
+  facet_wrap(~State) +
+  theme(legend.position = "none", text = element_text(family = "Noto")) + 
+  ggtitle("Relationships Between People with Children Under 15 and 'No' Response", "By State, 2017 Australian Same Sex Marriage Postal Survey")
 
 ```
 
+A couple of these facets look like text book examples of `correlation = 0.0`. The middle row of states actually look weakly negatively correlated(!). There are a few issues, one being we've got a lot less variation in the propotion of parents than we did with religious affiliation, but I reckon there's enough for a trend to show if it existed. I'm even prepared to don my stats-cowboy hat and say based on what I see here, it's almost as if the people concerned with the negative impact of same sex marriage on the hearts and minds of young children, tend not to be the people that you know... actually have them.
 
+## Discussion
+Once again we made short work of a fairly hairy data problem with the R tidyverse. For those new to joining datasets with dplyr, I appreciate they can be a little dizzying at first. It helps to step through the results of many joins to get a feel for the different types of outcomes. Why not try to mix some different Census data with the participation data we tidied last week?
+
+If you were already familiar with the tidyverse techniques I displayed here, then I hope this at least serves as a useful template for using ABS Census data in R. Thanks for reading!
+Code in this article is available at this Github repository.
