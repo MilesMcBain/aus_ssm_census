@@ -162,9 +162,9 @@ families_with_young_children_vs_no <-
   filter(ASGS_Structure == "CED") %>%
   left_join(family_composition, by = c("Census_Code_2016" = "CED_CODE_2016")) %>%
   mutate(pct_young_children =
-    ((Couple_family_with_children_under_15_and_no_dependent_students_and_no_non_dependent_children_Persons +
+    ( (Couple_family_with_children_under_15_and_no_dependent_students_and_no_non_dependent_children_Persons +
     One_parent_family_with_children_under_15_and_no_dependent_students_and_no_non_dependent_children_Persons)/
-    Total_Persons))*100) %>%
+    Total_Persons)*100) %>%
   select(area, pct_young_children, `No pct`, State)
 
 families_with_young_children_vs_no %>%
